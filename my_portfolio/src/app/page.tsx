@@ -1,8 +1,124 @@
+"use client";
 import Image from "next/image";
+import { useEffect, useRef, useState } from "react";
 
 export default function Home() {
+  // replaced percent state with intensity state (0..1)
+  const [upIntensity, setUpIntensity] = useState(0);
+  const [downIntensity, setDownIntensity] = useState(0);
+  const prevY = useRef<number>(0);
+  const targetUp = useRef<number>(0);
+  const targetDown = useRef<number>(0);
+  // idle timer: when no scroll for 500ms, hide the scroll images
+  const idleTimer = useRef<number | null>(null);
+  // show arrows only while user is actively scrolling (cleared after idle)
+  const [showArrows, setShowArrows] = useState(false);
+
+  useEffect(() => {
+    let raf = 0;
+
+    // scroll handler: compute direction & velocity, set targets
+    const onScroll = () => {
+      const y = window.scrollY;
+      const delta = y - prevY.current;
+      // mark that user is scrolling so arrows can appear
+      setShowArrows(true);
+      if (delta < 0) {
+        // scrolling up: show the "up" behavior by driving the DOWN overlay target (inverted)
+        const vel = Math.min(-delta, 200);
+        targetDown.current = Math.min(1, vel / 40);
+        targetUp.current = 0;
+      } else if (delta > 0) {
+        // scrolling down: show the "down" behavior by driving the UP overlay target (inverted)
+        const vel = Math.min(delta, 200);
+        targetUp.current = Math.min(1, vel / 40);
+        targetDown.current = 0;
+      }
+      prevY.current = y;
+
+      // reset idle timer — after 500ms of no scroll, hide overlays
+      if (idleTimer.current) {
+        clearTimeout(idleTimer.current);
+      }
+      idleTimer.current = window.setTimeout(() => {
+        targetUp.current = 0;
+        targetDown.current = 0;
+        // hide arrows when idle
+        setShowArrows(false);
+      }, 500);
+    };
+
+    // animation loop: smoothly interpolate intensity toward targets
+    const animate = () => {
+      setUpIntensity((u) => {
+        const next = u + (targetUp.current - u) * 0.18;
+        return Math.abs(next - u) < 0.0005 ? targetUp.current : next;
+      });
+      setDownIntensity((d) => {
+        const next = d + (targetDown.current - d) * 0.18;
+        return Math.abs(next - d) < 0.0005 ? targetDown.current : next;
+      });
+      raf = requestAnimationFrame(animate);
+    };
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    // start animation loop and initialize prevY
+    prevY.current = window.scrollY;
+    raf = requestAnimationFrame(animate);
+
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (idleTimer.current) {
+        clearTimeout(idleTimer.current);
+        idleTimer.current = null;
+      }
+      cancelAnimationFrame(raf);
+    };
+  }, []);
+
+  useEffect(() => {
+    // inject global CSS: hide scrollbars and enable smooth scroll
+    const STYLE_ID = "hide-scrollbar-smooth";
+    if (!document.getElementById(STYLE_ID)) {
+      const style = document.createElement("style");
+      style.id = STYLE_ID;
+      style.innerHTML = `
+        /* enable smooth scrolling, hide visual scrollbars and prevent horizontal scroll */
+        html, body {
+          scroll-behavior: smooth;
+          -ms-overflow-style: none; /* IE and Edge */
+          scrollbar-width: none; /* Firefox */
+          overflow-x: hidden; /* prevent horizontal scrolling */
+        }
+        /* WebKit browsers */
+        html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; }
+      `;
+      document.head.appendChild(style);
+    }
+    return () => {
+      const el = document.getElementById("hide-scrollbar-smooth");
+      if (el) el.remove();
+    };
+  }, []);
+
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
+    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 relative overflow-visible w-[1024px] mx-auto">
+      {/* moved & toned-down background render.svg: right side and clipped to avoid horizontal scroll */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-y-0 right-0 w-[50%] flex items-center justify-end pr-12 -z-10 overflow-hidden"
+      >
+        <Image
+          src="/render.svg"
+          alt=""
+          width={1600}
+          height={1600}
+          // keep image large but allow wrapper to clip any overflow
+          className="opacity-5 select-none max-w-none translate-x-12"
+          priority
+        />
+      </div>
+
       <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
         <Image
           className="dark:invert"
@@ -50,7 +166,12 @@ export default function Home() {
             Read our docs
           </a>
         </div>
+        <div style={{ height: '10000px' }}></div>
       </main>
+
+      {/* spacer to allow scrolling while testing waves */}
+      <div className="h-[150vh] w-full" />
+
       <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
         <a
           className="flex items-center gap-2 hover:underline hover:underline-offset-4"
@@ -98,6 +219,52 @@ export default function Home() {
           Go to nextjs.org →
         </a>
       </footer>
+
+      {/* Fixed middle-left stack: up full, up arrow, mouse, down arrow, down full */}
+      <div className="fixed left-6 top-1/2 transform -translate-y-1/2 z-30 flex flex-col items-center gap-2">
+        {/* Up full reveal (above mouse) */}
+        <div
+          className="w-12 sm:w-14 overflow-hidden transition-all duration-200"
+          style={{ height: `${Math.round(upIntensity * 100)}%`, opacity: upIntensity }}
+        >
+          <div className="relative w-full h-10 sm:h-12">
+            <Image src="/scroll_up.svg" alt="scroll up" fill className="object-contain filter invert" />
+          </div>
+        </div>
+
+        {/* Up arrow (above mouse) */}
+        <div
+          className="transition-opacity duration-200"
+          style={{ opacity: showArrows ? Math.max(0, 1 - downIntensity * 1.6) : 0 }}
+        >
+          <Image src="/one_arrow_scroll_up.svg" alt="one arrow up" width={20} height={20} className="filter invert" />
+        </div>
+
+        {/* Mouse */}
+        <div className="relative w-12 h-12 sm:w-14 sm:h-14">
+          <Image src="/mouse.svg" alt="mouse" fill className="object-contain filter invert" priority style={{ zIndex: 50 }} />
+        </div>
+
+        {/* Down arrow (below mouse) */}
+        <div
+          className="transition-opacity duration-200"
+          style={{ opacity: showArrows ? Math.max(0, 1 - upIntensity * 1.6) : 0 }}
+        >
+          <Image src="/one_arrow_scroll_down.svg" alt="one arrow down" width={20} height={20} className="filter invert" />
+        </div>
+
+        {/* Down full reveal (below mouse) */}
+        <div
+          className="w-12 sm:w-14 overflow-hidden transition-all duration-200"
+          style={{ height: `${Math.round(downIntensity * 100)}%`, opacity: downIntensity }}
+        >
+          <div className="relative w-full h-10 sm:h-12">
+            <Image src="/scroll_down.svg" alt="scroll down" fill className="object-contain filter invert" />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
+             
+
