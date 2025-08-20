@@ -9,6 +9,8 @@ export default function Home() {
   const prevY = useRef<number>(0);
   const targetUp = useRef<number>(0);
   const targetDown = useRef<number>(0);
+  // track last scroll direction: 1 = down, -1 = up, 0 = none
+  const lastDir = useRef<number>(0);
   // idle timer: when no scroll for 500ms, hide the scroll images
   const idleTimer = useRef<number | null>(null);
   // show arrows only while user is actively scrolling (cleared after idle)
@@ -28,11 +30,13 @@ export default function Home() {
         const vel = Math.min(-delta, 200);
         targetDown.current = Math.min(1, vel / 40);
         targetUp.current = 0;
+        lastDir.current = -1;
       } else if (delta > 0) {
         // scrolling down: show the "down" behavior by driving the UP overlay target (inverted)
         const vel = Math.min(delta, 200);
         targetUp.current = Math.min(1, vel / 40);
         targetDown.current = 0;
+        lastDir.current = 1;
       }
       prevY.current = y;
 
@@ -98,6 +102,49 @@ export default function Home() {
     return () => {
       const el = document.getElementById("hide-scrollbar-smooth");
       if (el) el.remove();
+    };
+  }, []);
+
+  // smooth wheel scrolling for desktop (pointer:fine)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    // enable only on devices with fine pointer (desktop mouse)
+    if (!window.matchMedia || !window.matchMedia("(pointer: fine)").matches) return;
+
+    let rafId = 0;
+    let target = window.scrollY;
+    let current = window.scrollY;
+    let isRunning = false;
+
+    const clamp = (v: number) =>
+      Math.max(0, Math.min(document.documentElement.scrollHeight - window.innerHeight, v));
+
+    const step = () => {
+      current += (target - current) * 0.12;
+      window.scrollTo(0, Math.round(current));
+      if (Math.abs(target - current) > 0.5) {
+        rafId = requestAnimationFrame(step);
+      } else {
+        isRunning = false;
+      }
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      // only vertical scroll smoothing
+      if (Math.abs(e.deltaY) < Math.abs(e.deltaX)) return;
+      e.preventDefault(); // we registered non-passive so this works
+      target = clamp(target + e.deltaY);
+      if (!isRunning) {
+        isRunning = true;
+        current = window.scrollY;
+        rafId = requestAnimationFrame(step);
+      }
+    };
+
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      window.removeEventListener("wheel", onWheel);
+      cancelAnimationFrame(rafId);
     };
   }, []);
 
@@ -220,24 +267,33 @@ export default function Home() {
         </a>
       </footer>
 
-      {/* Fixed middle-left stack: up full, up arrow, mouse, down arrow, down full */}
+      {/* Fixed middle-left stack: each "packet" contains arrow + full svg (arrow gets "filled" by full svg) */}
       <div className="fixed left-6 top-1/2 transform -translate-y-1/2 z-30 flex flex-col items-center gap-2">
-        {/* Up full reveal (above mouse) */}
-        <div
-          className="w-12 sm:w-14 overflow-hidden transition-all duration-200"
-          style={{ height: `${Math.round(upIntensity * 100)}%`, opacity: upIntensity }}
-        >
-          <div className="relative w-full h-10 sm:h-12">
-            <Image src="/scroll_up.svg" alt="scroll up" fill className="object-contain filter invert" />
+        {/* UP packet (above mouse): arrow centered, full svg reveals from bottom to "fill" the packet */}
+        <div className="relative w-12 sm:w-14 h-12 sm:h-12">
+          {/* full image grows from bottom to fill the packet */}
+          <div
+            className="absolute inset-0 flex items-end justify-center overflow-hidden transition-all duration-200"
+            style={{
+              height: `${Math.round(upIntensity * 100)}%`,
+              opacity: upIntensity,
+              pointerEvents: "none",
+            }}
+          >
+            <div className="relative w-full h-full">
+              <Image src="/scroll_up.svg" alt="scroll up" fill className="object-contain filter invert" />
+            </div>
           </div>
-        </div>
-
-        {/* Up arrow (above mouse) */}
-        <div
-          className="transition-opacity duration-200"
-          style={{ opacity: showArrows ? Math.max(0, 1 - downIntensity * 1.6) : 0 }}
-        >
-          <Image src="/one_arrow_scroll_up.svg" alt="one arrow up" width={20} height={20} className="filter invert" />
+          {/* arrow sits in the same packet and fades out as packet fills */}
+          <div
+            className="absolute inset-0 flex items-center justify-center transition-opacity duration-200"
+            style={{
+              // show only when last scroll direction was UP
+              opacity: lastDir.current === -1 && showArrows ? Math.max(0, 1 - upIntensity * 1.6) : 0,
+            }}
+          >
+            <Image src="/one_arrow_scroll_down.svg" alt="one arrow up" width={20} height={20} className="filter invert" />
+          </div>
         </div>
 
         {/* Mouse */}
@@ -245,26 +301,35 @@ export default function Home() {
           <Image src="/mouse.svg" alt="mouse" fill className="object-contain filter invert" priority style={{ zIndex: 50 }} />
         </div>
 
-        {/* Down arrow (below mouse) */}
-        <div
-          className="transition-opacity duration-200"
-          style={{ opacity: showArrows ? Math.max(0, 1 - upIntensity * 1.6) : 0 }}
-        >
-          <Image src="/one_arrow_scroll_down.svg" alt="one arrow down" width={20} height={20} className="filter invert" />
-        </div>
-
-        {/* Down full reveal (below mouse) */}
-        <div
-          className="w-12 sm:w-14 overflow-hidden transition-all duration-200"
-          style={{ height: `${Math.round(downIntensity * 100)}%`, opacity: downIntensity }}
-        >
-          <div className="relative w-full h-10 sm:h-12">
-            <Image src="/scroll_down.svg" alt="scroll down" fill className="object-contain filter invert" />
+        {/* DOWN packet (below mouse): arrow centered, full svg reveals from top to fill the packet */}
+        <div className="relative w-12 sm:w-14 h-12 sm:h-12">
+          {/* full image grows from top */}
+          <div
+            className="absolute inset-0 flex items-start justify-center overflow-hidden transition-all duration-200"
+            style={{
+              height: `${Math.round(downIntensity * 100)}%`,
+              opacity: downIntensity,
+              pointerEvents: "none",
+            }}
+          >
+            <div className="relative w-full h-full">
+              <Image src="/scroll_down.svg" alt="scroll down" fill className="object-contain filter invert" />
+            </div>
+          </div>
+          {/* arrow sits in the same packet and fades out as packet fills */}
+          <div
+            className="absolute inset-0 flex items-center justify-center transition-opacity duration-200"
+            style={{
+              // show only when last scroll direction was DOWN
+              opacity: lastDir.current === 1 && showArrows ? Math.max(0, 1 - downIntensity * 1.6) : 0,
+            }}
+          >
+            <Image src="/one_arrow_scroll_up.svg" alt="one arrow down" width={20} height={20} className="filter invert" />
           </div>
         </div>
       </div>
     </div>
   );
 }
-             
+
 
