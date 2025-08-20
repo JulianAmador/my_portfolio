@@ -16,6 +16,85 @@ export default function Home() {
   // show arrows only while user is actively scrolling (cleared after idle)
   const [showArrows, setShowArrows] = useState(false);
 
+  // add: theme state + helper
+  const [theme, setThemeState] = useState<"pc" | "dark" | "clear">("pc");
+  // compute background class for the selector based on current theme (pc -> use system preference)
+  const selectorBg = (() => {
+    if (theme === "clear") return "bg-black/[.16]";
+    if (theme === "dark") return "bg-white/[.16]";
+    // pc: reflect system preference
+    if (typeof window !== "undefined" && window.matchMedia) {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "bg-white/[.16]" : "bg-black/[.16]";
+    }
+    return "bg-white/[.16]";
+  })();
+
+  // applyTheme: handle 'pc' by applying current system scheme (dark/clear)
+  const applyTheme = (t: "pc" | "dark" | "clear") => {
+    const el = document.documentElement;
+    // clear any explicit theme classes
+    el.classList.remove("theme-dark", "theme-clear");
+
+    if (t === "dark") {
+      el.classList.add("theme-dark");
+    } else if (t === "clear") {
+      el.classList.add("theme-clear");
+    } else {
+      // pc: apply current system preference immediately (dark -> theme-dark, otherwise -> theme-clear)
+      if (typeof window !== "undefined" && window.matchMedia) {
+        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        el.classList.add(prefersDark ? "theme-dark" : "theme-clear");
+      }
+    }
+
+    setThemeState(t);
+    try {
+      localStorage.setItem("site-theme", t);
+    } catch (e) {
+      /* ignore */
+    }
+  };
+
+  // initialize theme from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("site-theme") as "pc" | "dark" | "clear" | null;
+      if (saved === "dark" || saved === "clear" || saved === "pc") {
+        applyTheme(saved);
+      } else {
+        applyTheme("pc");
+      }
+    } catch (e) {
+      applyTheme("pc");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // watch system preference changes only while in 'pc' mode
+  useEffect(() => {
+    if (theme !== "pc" || typeof window === "undefined" || !window.matchMedia) return;
+
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e: MediaQueryListEvent | MediaQueryList) => {
+      const el = document.documentElement;
+      el.classList.remove("theme-dark", "theme-clear");
+      el.classList.add(e.matches ? "theme-dark" : "theme-clear");
+    };
+
+    // apply current immediately
+    handler(mq);
+    // add listener (use addEventListener if available)
+    if (typeof mq.addEventListener === "function") {
+      // modern browsers
+      mq.addEventListener("change", handler as EventListener);
+      return () => mq.removeEventListener("change", handler as EventListener);
+    } else if (typeof mq.addListener === "function") {
+      // older browsers
+      mq.addListener(handler as (e: MediaQueryListEvent) => void);
+      return () => mq.removeListener(handler as (e: MediaQueryListEvent) => void);
+    }
+  }, [theme]);
+
   useEffect(() => {
     let raf = 0;
 
@@ -80,6 +159,7 @@ export default function Home() {
     };
   }, []);
 
+  // inject global CSS: hide scrollbars and enable smooth scroll
   useEffect(() => {
     // inject global CSS: hide scrollbars and enable smooth scroll
     const STYLE_ID = "hide-scrollbar-smooth";
@@ -96,6 +176,56 @@ export default function Home() {
         }
         /* WebKit browsers */
         html::-webkit-scrollbar, body::-webkit-scrollbar { display: none; }
+
+        /* Theme rules */
+        html.theme-dark, html.theme-dark body {
+          background-color: #0b0b0b !important;
+          color: #e6e6e6 !important;
+        }
+        html.theme-dark .bg-foreground { background-color: #111 !important; color: #fff !important; }
+        html.theme-dark a { color: #e6e6e6 !important; }
+
+        html.theme-clear, html.theme-clear body {
+          background-color: #ffffff !important;
+          color: #0b0b0b !important;
+        }
+        html.theme-clear .bg-foreground { background-color: #fff !important; color: #000 !important; }
+        html.theme-clear a { color: #0b0b0b !important; }
+
+        /* theme-aware icons */
+        .theme-icon { position: relative; display: inline-block; filter: none; transition: filter .15s ease, opacity .15s ease, transform .2s ease; }
+        /* make icons bright/white in dark mode */
+        html.theme-dark .theme-icon { filter: invert(1) brightness(2) saturate(1); }
+        html.theme-clear .theme-icon { filter: none; }
+
+        /* Star Wars hover ON IMAGES (.theme-icon) */
+        .theme-btn { position: relative; display: inline-flex; align-items: center; justify-content: center; padding: 6px; }
+        /* halo pseudo-element now attached to the image */
+        .theme-icon::after {
+          content: "";
+          position: absolute;
+          left: 50%;
+          top: 100%;
+          transform: translateX(-50%) translateY(8px) scaleY(0.6);
+          width: 0;
+          height: 6px;
+          background: linear-gradient(90deg,#ffd54a,#fff176,#ffd54a);
+          opacity: 0;
+          filter: blur(8px);
+          transition: width .25s ease, opacity .25s ease, transform .25s ease;
+          border-radius: 4px;
+          pointer-events: none;
+        }
+        /* hover triggers when pointer is over the image */
+        .theme-icon:hover {
+          transform: translateY(-5px) rotateX(6deg) scale(1.04);
+          filter: drop-shadow(0 6px 14px rgba(255,215,74,0.25));
+        }
+        .theme-icon:hover::after {
+          width: 120%;
+          opacity: 1;
+          transform: translateX(-50%) translateY(6px) scaleY(0.86);
+        }
       `;
       document.head.appendChild(style);
     }
@@ -267,6 +397,52 @@ export default function Home() {
         </a>
       </footer>
 
+      {/* Fixed theme selector — always visible at top-right */}
+      <div className={`fixed right-6 top-6 z-50 flex items-center gap-2 ${selectorBg} backdrop-blur-sm rounded-full p-1`}>
+        <button
+          onClick={() => applyTheme("clear")}
+          className={`px-2 py-1 rounded text-xs`}
+          aria-pressed={theme === "clear"}
+        >
+          <Image
+            aria-hidden
+            src="/light.svg"
+            alt="lightside"
+            width={30}
+            height={30}
+            className="theme-icon"
+          />
+        </button>
+        <button
+          onClick={() => applyTheme("pc")}
+          className={`px-2 py-1 rounded text-xs`}
+          aria-pressed={theme === "pc"}
+        >
+          <Image
+            aria-hidden
+            src="/choose.svg"
+            alt="Choose"
+            width={30}
+            height={30}
+            className="theme-icon"
+          />
+        </button>
+      <button
+          onClick={() => applyTheme("dark")}
+          className={`px-2 py-1 rounded text-xs`}
+          aria-pressed={theme === "dark"}
+        >
+          <Image
+            aria-hidden
+            src="/dark.svg"
+            alt="darkside"
+            width={30}
+            height={30}
+            className="theme-icon"
+          />
+        </button>
+      </div>
+
       {/* Fixed middle-left stack: each "packet" contains arrow + full svg (arrow gets "filled" by full svg) */}
       <div className="fixed left-6 top-1/2 transform -translate-y-1/2 z-30 flex flex-col items-center gap-2">
         {/* UP packet (above mouse): arrow centered, full svg reveals from bottom to "fill" the packet */}
@@ -281,7 +457,7 @@ export default function Home() {
             }}
           >
             <div className="relative w-full h-full">
-              <Image src="/scroll_up.svg" alt="scroll up" fill className="object-contain filter invert" />
+              <Image src="/scroll_up.svg" alt="scroll up" fill className="object-contain theme-icon" />
             </div>
           </div>
           {/* arrow sits in the same packet and fades out as packet fills */}
@@ -292,13 +468,13 @@ export default function Home() {
               opacity: lastDir.current === -1 && showArrows ? Math.max(0, 1 - upIntensity * 1.6) : 0,
             }}
           >
-            <Image src="/one_arrow_scroll_down.svg" alt="one arrow up" width={20} height={20} className="filter invert" />
+            <Image src="/one_arrow_scroll_down.svg" alt="one arrow up" width={20} height={20} className="theme-icon" />
           </div>
         </div>
 
         {/* Mouse */}
         <div className="relative w-12 h-12 sm:w-14 sm:h-14">
-          <Image src="/mouse.svg" alt="mouse" fill className="object-contain filter invert" priority style={{ zIndex: 50 }} />
+          <Image src="/mouse.svg" alt="mouse" fill className="object-contain theme-icon" priority style={{ zIndex: 50 }} />
         </div>
 
         {/* DOWN packet (below mouse): arrow centered, full svg reveals from top to fill the packet */}
@@ -313,7 +489,7 @@ export default function Home() {
             }}
           >
             <div className="relative w-full h-full">
-              <Image src="/scroll_down.svg" alt="scroll down" fill className="object-contain filter invert" />
+              <Image src="/scroll_down.svg" alt="scroll down" fill className="object-contain theme-icon" />
             </div>
           </div>
           {/* arrow sits in the same packet and fades out as packet fills */}
@@ -324,7 +500,7 @@ export default function Home() {
               opacity: lastDir.current === 1 && showArrows ? Math.max(0, 1 - downIntensity * 1.6) : 0,
             }}
           >
-            <Image src="/one_arrow_scroll_up.svg" alt="one arrow down" width={20} height={20} className="filter invert" />
+            <Image src="/one_arrow_scroll_up.svg" alt="one arrow down" width={20} height={20} className="theme-icon" />
           </div>
         </div>
       </div>
